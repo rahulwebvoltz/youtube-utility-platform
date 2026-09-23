@@ -67,12 +67,6 @@ jobs:
   # that's what actually ships.
   quality:
     name: Lint, typecheck, build
-    strategy:
-      fail-fast: false
-      matrix:
-        # engines.node in package.json says >=20 - actually test the floor of
-        # that claim, not just whatever version happens to be on the runner.
-        node-version: [20, 24]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -86,7 +80,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24
           cache: pnpm
 
       - name: Restore turbo cache

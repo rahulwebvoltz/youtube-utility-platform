@@ -182,7 +182,7 @@ See [docs/README.md](docs/README.md) for the complete list and per-variable deta
 
 ## 💻 Local development
 
-Requires Node 20+, pnpm, Docker, and on your system PATH (or pointed at via the env vars above):
+Requires Node 24+, pnpm, Docker, and on your system PATH (or pointed at via the env vars above):
 **yt-dlp**, **FFmpeg**, and **Deno** (yt-dlp's JS challenge solver - without it, some downloads
 fail with `"The page needs to be reloaded."` once YouTube enforces SABR streaming).
 
