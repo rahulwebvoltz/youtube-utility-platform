@@ -32,7 +32,16 @@ export function createTypeScriptConfig({ tsconfigRootDir }) {
     extends: [tseslint.configs.strictTypeChecked, tseslint.configs.stylisticTypeChecked],
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          // vitest.config.ts/vitest.setup.ts aren't part of any app's own
+          // tsconfig `include` (that would pull them into that app's real
+          // build/rootDir) - lint them against an inferred single-file
+          // project instead of requiring project membership. Named exactly,
+          // not a broad `*.config.ts` glob, so this never collides with an
+          // app that already covers its own root configs via a real project
+          // (e.g. apps/web and apps/admin's vite.config.ts + tsconfig.node.json).
+          allowDefaultProject: ['vitest.config.ts', 'vitest.setup.ts'],
+        },
         tsconfigRootDir,
       },
     },

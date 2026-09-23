@@ -156,8 +156,12 @@ Base URL: `/api/v1`, served by `apps/api`.
 
 - **Auth** (`/auth`): `POST /register`, `POST /login`, `POST /refresh`, `POST /logout`.
   JWT access tokens (short-lived, returned in the response body) plus a rotating
-  refresh token stored as an HttpOnly cookie scoped to `/api/v1/auth`. Reuse of an
-  already-rotated or forged refresh token revokes every session for that user.
+  refresh token stored as an HttpOnly cookie scoped to `/api/v1/auth`. A forged
+  refresh token (right jti, wrong secret) always revokes every session for that user;
+  a rotated-away token replayed within a ~10s grace period is treated as a harmless
+  retry (two tabs refreshing at once, or a response lost to a page navigation) and
+  rejoins the session that rotation already produced, rather than being logged out -
+  only a replay _after_ that window is treated as theft (`auth.service.ts`'s `refresh()`).
   `login`/`refresh` both 403 `ACCOUNT_DISABLED` for a user an admin has disabled
   (see Admin below) - disabling also proactively revokes every outstanding
   refresh token, so an already-issued one can't keep the session alive.

@@ -229,9 +229,10 @@ HttpOnly-cookie refresh tokens - reuse of an already-rotated token revokes every
 user. Downloads are gated by HMAC signature, not by being behind auth, so links stay embeddable
 without ever exposing the underlying filesystem path.
 
-There's no automated test suite yet - correctness is currently verified by hand (typecheck, lint,
-and live end-to-end runs against a real dev server) for every change; see
-[Future improvements](#-future-improvements).
+A Vitest suite is starting to land (`apps/api/src/modules/auth/auth.service.test.ts` covers
+register/login/refresh, including the token-rotation race below) - most of the codebase is still
+verified by hand (typecheck, lint, and live end-to-end runs against a real dev server) rather than
+automated tests; see [Future improvements](#-future-improvements).
 
 ## 🧠 Design decisions
 
@@ -246,6 +247,10 @@ and live end-to-end runs against a real dev server) for every change; see
   video actually have?" instead of offering resolutions that silently collapse into duplicates.
 - **Genuine language auto-detection over a default** - yt-dlp's caption metadata marks the real
   ASR-original track explicitly; that's used instead of guessing or hardcoding `en`.
+- **A short grace period on refresh-token rotation** - a rotated-away token replayed within ~10s
+  (two tabs both refreshing, or a response lost to a page navigation) rejoins the session that
+  rotation already produced instead of being treated as theft; a replay after that window, or with
+  the wrong secret, still revokes every session as before.
 
 ## 🐛 Troubleshooting
 
@@ -265,9 +270,8 @@ and live end-to-end runs against a real dev server) for every change; see
 
 ## 🚀 Future improvements
 
-- An automated test suite (unit + integration) - currently the biggest gap.
+- Expand test coverage beyond `auth.service.ts` - the rest of the API, the worker's job pipeline,
+  and integration tests against a real MongoDB/Redis are still unverified by anything automated.
 - Billing/usage plans (deliberately out of scope for now - see [docs/README.md](docs/README.md)).
-- Fix a refresh-token race: rapid concurrent `/auth/refresh` calls (e.g. several tabs, or quick
-  successive page reloads) can trigger the reuse-detection logic and revoke a legitimate session.
 - AI features (summary, chat, RAG) - explicitly deferred, addable later as a separate worker
   without restructuring the existing pipeline.

@@ -7,8 +7,22 @@ import { ApiError } from '@/middleware/errorHandler.js';
 import { UserModel, type UserDocument } from '@/database/models/user.model.js';
 import { RefreshTokenModel } from '@/database/models/refreshToken.model.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '@/modules/auth/jwt.js';
+import { redisConnection } from '@/queues/redis.js';
 
 export const PASSWORD_SALT_ROUNDS = 12;
+
+// A rotated token can legitimately get presented again within a few seconds -
+// e.g. two tabs both refreshing on load, or a request whose response never
+// reached the browser (aborted by a page navigation) while the server-side
+// rotation still completed. Treating every such replay as theft logs a
+// legitimate user out; this window lets a same-token retry rejoin the
+// rotation that already happened instead. A replay *after* this window (or
+// with the wrong secret) is still treated as theft.
+const REFRESH_GRACE_PERIOD_SECONDS = 10;
+
+function refreshGraceKey(tokenId: string): string {
+  return `auth:refresh-grace:${tokenId}`;
+}
 
 export interface AuthTokens {
   accessToken: string;
@@ -111,15 +125,41 @@ export async function refresh(combinedToken: string): Promise<{ user: UserDocume
     throw new ApiError(401, 'INVALID_REFRESH_TOKEN', 'Invalid or expired refresh token');
   }
 
-  // A rotated (or logged-out) token being presented again, or a hash mismatch on a
-  // still-active token, both indicate the token was stolen: revoke every session for
-  // this user rather than just rejecting the one request.
-  if (tokenDoc.revokedAt || tokenDoc.tokenHash !== hashToken(raw)) {
+  // A hash mismatch on a still-active token always indicates theft (someone has a
+  // valid jti but not the real secret) - revoke every session for this user, no
+  // grace period applies.
+  if (tokenDoc.tokenHash !== hashToken(raw)) {
     await RefreshTokenModel.updateMany(
       { userId: tokenDoc.userId, revokedAt: { $exists: false } },
       { revokedAt: new Date() },
     );
     throw new ApiError(401, 'INVALID_REFRESH_TOKEN', 'Invalid or expired refresh token');
+  }
+
+  // A rotated token being presented again is either theft (a stolen token replayed
+  // after the legitimate client already rotated past it) or a harmless race (see the
+  // grace-period comment above) - the two are indistinguishable from this request
+  // alone, so lean on the grace cache to tell them apart.
+  if (tokenDoc.revokedAt) {
+    const cached = await redisConnection.get(refreshGraceKey(tokenDoc._id.toString()));
+    if (!cached) {
+      await RefreshTokenModel.updateMany(
+        { userId: tokenDoc.userId, revokedAt: { $exists: false } },
+        { revokedAt: new Date() },
+      );
+      throw new ApiError(401, 'INVALID_REFRESH_TOKEN', 'Invalid or expired refresh token');
+    }
+
+    // Only ever written by this same function, just below - safe to trust the shape.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- see comment above
+    const { userId, accessToken, refreshToken } = JSON.parse(cached) as AuthTokens & {
+      userId: string;
+    };
+    const user = await UserModel.findById(userId);
+    if (!user || user.isDisabled) {
+      throw new ApiError(401, 'INVALID_REFRESH_TOKEN', 'Invalid or expired refresh token');
+    }
+    return { user, accessToken, refreshToken };
   }
 
   if (tokenDoc.expiresAt.getTime() < Date.now()) {
@@ -139,6 +179,16 @@ export async function refresh(combinedToken: string): Promise<{ user: UserDocume
   await tokenDoc.save();
 
   const tokens = await issueTokens(user);
+
+  // Cache the pair this rotation produced so a same-token retry within the grace
+  // window converges on this exact session instead of minting yet another one.
+  await redisConnection.set(
+    refreshGraceKey(tokenDoc._id.toString()),
+    JSON.stringify({ userId: user._id.toString(), ...tokens }),
+    'EX',
+    REFRESH_GRACE_PERIOD_SECONDS,
+  );
+
   return { user, ...tokens };
 }
 
