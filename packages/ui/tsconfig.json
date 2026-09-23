@@ -1,0 +1,9 @@
+{
+  "extends": "@ytp/tsconfig/react-library.json",
+  "compilerOptions": {
+    "composite": false,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}

@@ -1,0 +1,4 @@
+title = "YouTube Utility Platform secret scanning"
+
+[extend]
+useDefault = true

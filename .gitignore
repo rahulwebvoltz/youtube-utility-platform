@@ -1,0 +1,34 @@
+node_modules
+.pnpm-store
+
+dist
+build
+.turbo
+.next
+out
+
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+.env
+.env.local
+.env.*.local
+
+# Real browser login cookies (yt-dlp auth) - never commit these.
+.secrets/
+
+.DS_Store
+Thumbs.db
+
+coverage
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+data/
+tmp/
+
+# Local filesystem media storage (STORAGE_ROOT) - user-generated downloads, never committed.
+storage-data/

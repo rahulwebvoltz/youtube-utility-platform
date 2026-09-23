@@ -1,0 +1,9 @@
+{
+  "extends": "@ytp/tsconfig/node-library.json",
+  "compilerOptions": {
+    "composite": false,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}
