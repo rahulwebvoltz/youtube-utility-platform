@@ -5,32 +5,154 @@ on:
   push:
     branches: [main]
 
+# A new push to the same PR/branch cancels whatever CI was already running for
+# it - avoids burning runners on commits nobody's waiting on anymore.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege default - the default GITHUB_TOKEN can otherwise write to
+# almost everything in the repo. Individual jobs opt back into what they need.
+permissions:
+  contents: read
+
+env:
+  TURBO_TELEMETRY_DISABLED: 1
+  PNPM_VERSION: '11.6.0'
+
 jobs:
-  build:
+  # Runs independently of the dependency install below - a leaked secret is
+  # worth catching even if the install step itself would fail.
+  secret-scan:
+    name: Secret scan (Gitleaks)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
 
+  # Conventional Commits are enforced locally via Husky's commit-msg hook, but
+  # --no-verify exists - CI is the actual source of truth, checked against
+  # every commit actually being merged, not just the one on the contributor's
+  # machine.
+  commit-lint:
+    name: Commit messages
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v5
         with:
-          version: 11.6.0
-
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: commitlint
+        run: pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
+  # Turborepo's affected-package filtering: a PR only lints/typechecks/builds
+  # the packages it actually touched (plus anything that depends on them) -
+  # not the entire monorepo. A push to main still validates everything, since
+  # that's what actually ships.
+  quality:
+    name: Lint, typecheck, build
+    strategy:
+      fail-fast: false
+      matrix:
+        # engines.node in package.json says >=20 - actually test the floor of
+        # that claim, not just whatever version happens to be on the runner.
+        node-version: [20, 24]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+
+      - name: Restore turbo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            turbo-${{ runner.os }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Resolve affected-package filter
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "args=--filter=...[origin/${{ github.event.pull_request.base.ref }}...HEAD]" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Format check
+        run: pnpm run format:check
+
       - name: Lint
-        run: pnpm lint
+        run: pnpm exec turbo run lint ${{ steps.filter.outputs.args }}
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: pnpm exec turbo run typecheck ${{ steps.filter.outputs.args }}
 
       - name: Test
-        run: pnpm test
+        # No automated test suite exists yet (see README) - this runs
+        # whatever packages do define a `test` script and is a no-op
+        # otherwise, so it starts enforcing automatically the day one exists.
+        run: pnpm exec turbo run test ${{ steps.filter.outputs.args }}
 
       - name: Build
-        run: pnpm build
+        run: pnpm exec turbo run build ${{ steps.filter.outputs.args }}
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Audit (high+ severity)
+        run: pnpm run security:audit
+
+  # A single required status check for branch protection, so adding/removing
+  # jobs above never means going back to update the protection rule too.
+  ci-success:
+    name: CI
+    if: always()
+    needs: [secret-scan, commit-lint, quality, dependency-audit]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any dependency failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
