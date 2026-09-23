@@ -206,6 +206,25 @@ pnpm dev
 - Admin: http://localhost:3001
 - API: http://localhost:4000
 
+### Exporting YouTube cookies (if downloads get blocked)
+
+YouTube occasionally blocks anonymous requests with `"Sign in to confirm you're not a bot"`.
+Fix by giving yt-dlp a real logged-in session's cookies:
+
+1. Install the [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
+   extension (Chrome/Edge) - it exports cookies in the Netscape format yt-dlp expects, entirely
+   locally (nothing is sent anywhere).
+2. While logged into YouTube in that browser, click the extension icon and export the current
+   site's cookies - it downloads a `cookies.txt` file.
+3. Move that file into `apps/worker/.secrets/youtube-cookies.txt` (create the `.secrets/` folder
+   if it doesn't exist yet - it's already covered by `.gitignore`, so it's never committed).
+4. Set `YTDLP_COOKIES_FILE` in `apps/worker/.env` to that file's **absolute** path, then restart
+   `pnpm dev`.
+
+Cookies expire periodically (YouTube rotates them as a security measure) - once yt-dlp starts
+logging `"provided YouTube account cookies are no longer valid"`, just re-export and overwrite
+the same file.
+
 ## ⚙️ Available commands
 
 | Command                        | Purpose                                  |
@@ -260,9 +279,8 @@ automated tests; see [Future improvements](#-future-improvements).
 - **`"The page needs to be reloaded."` from yt-dlp** - YouTube is enforcing SABR streaming and
   yt-dlp couldn't solve the JS "n" challenge. Install Deno and set `YTDLP_EXTRA_PATH` to its
   directory (see [Environment variables](#-environment-variables)).
-- **`"Sign in to confirm you're not a bot"`** - set `YTDLP_COOKIES_FILE` to a real
-  Netscape-format `cookies.txt` exported from a logged-in browser session; these expire
-  periodically and need re-exporting.
+- **`"Sign in to confirm you're not a bot"`** - see
+  [Exporting YouTube cookies](#exporting-youtube-cookies-if-downloads-get-blocked) above.
 - **Video downloads but has no audio (or vice versa)** - yt-dlp needs `--ffmpeg-location` to merge
   separate video+audio streams; without it, it silently leaves them unmerged. Set `FFMPEG_PATH`.
 - **Port already in use on `pnpm dev`** - a previous `pnpm dev` instance (yours or a leftover
